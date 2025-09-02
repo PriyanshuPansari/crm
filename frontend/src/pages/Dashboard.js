@@ -1,15 +1,42 @@
-import { useContext, useState } from 'react';
+import { useContext, useState, useEffect } from 'react';
 import { AuthContext } from '../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
-import { useMyOrganization, useCreateOrganization, useInviteUser } from '../hooks/useOrganizations';
-import { useTodos, useCreateTodo, useUpdateTodo, useDeleteTodo } from '../hooks/useTodos';
-import { useNotes, useCreateNote, useUpdateNote, useDeleteNote } from '../hooks/useNotes';
+import { 
+  useMyOrganizations, 
+  useMyOrganization, 
+  useOrganization,
+  useCreateOrganization, 
+  useInviteUser,
+  useOrganizationMembers,
+  useDeleteOrganization,
+  useRemoveMember
+} from '../hooks/useOrganizations';
+import { 
+  useTodos, 
+  useTodosByOrg, 
+  useCreateTodo, 
+  useCreateTodoInOrg, 
+  useUpdateTodo, 
+  useUpdateTodoInOrg,
+  useDeleteTodo,
+  useDeleteTodoInOrg
+} from '../hooks/useTodos';
+import { 
+  useNotes, 
+  useNotesByOrg, 
+  useCreateNote, 
+  useCreateNoteInOrg, 
+  useUpdateNote, 
+  useDeleteNote 
+} from '../hooks/useNotes';
 import Navigation from '../components/Navigation';
+import OrganizationSelector from '../components/OrganizationSelector';
 
 export default function Dashboard() {
   const { user, logout } = useContext(AuthContext);
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState('overview');
+  const [selectedOrgId, setSelectedOrgId] = useState(null);
   const [showCreateOrg, setShowCreateOrg] = useState(false);
   const [showInviteUser, setShowInviteUser] = useState(false);
   const [showCreateTodo, setShowCreateTodo] = useState(false);
@@ -23,17 +50,86 @@ export default function Dashboard() {
   const [noteTitle, setNoteTitle] = useState('');
   const [noteContent, setNoteContent] = useState('');
 
+  const { data: organizations, isLoading: orgsLoading } = useMyOrganizations();
   const { data: organization, isLoading: orgLoading, error: orgError } = useMyOrganization();
-  const { data: todos, isLoading: todosLoading } = useTodos();
-  const { data: notes, isLoading: notesLoading } = useNotes();
+  const { data: currentOrg } = useOrganization(selectedOrgId);
+  const { data: orgMembers } = useOrganizationMembers(selectedOrgId);
+  
+  // Always call both hooks, use the appropriate data based on selection
+  const { data: legacyTodos, isLoading: legacyTodosLoading } = useTodos();
+  const { data: orgTodos, isLoading: orgTodosLoading } = useTodosByOrg(selectedOrgId);
+  const { data: legacyNotes, isLoading: legacyNotesLoading } = useNotes();
+  const { data: orgNotes, isLoading: orgNotesLoading } = useNotesByOrg(selectedOrgId);
+  
+  // SECURITY: Only use organization data if user actually belongs to the organization
+  const userBelongsToSelectedOrg = selectedOrgId && organizations && 
+    organizations.some(org => org.id === selectedOrgId);
+  
+  // Use organization-scoped data only if user has access, otherwise use legacy or empty
+  const todos = userBelongsToSelectedOrg ? orgTodos : 
+    (organizations && organizations.length > 0 ? legacyTodos : []);
+  const notes = userBelongsToSelectedOrg ? orgNotes : 
+    (organizations && organizations.length > 0 ? legacyNotes : []);
+  const todosLoading = userBelongsToSelectedOrg ? orgTodosLoading : legacyTodosLoading;
+  const notesLoading = userBelongsToSelectedOrg ? orgNotesLoading : legacyNotesLoading;
+    
   const createOrgMutation = useCreateOrganization();
-  const inviteUserMutation = useInviteUser();
-  const createTodoMutation = useCreateTodo();
-  const updateTodoMutation = useUpdateTodo();
-  const deleteTodoMutation = useDeleteTodo();
-  const createNoteMutation = useCreateNote();
+  const inviteUserMutation = useInviteUser(selectedOrgId);
+  const deleteOrgMutation = useDeleteOrganization(selectedOrgId);
+  const removeMemberMutation = useRemoveMember(selectedOrgId);
+  
+  // Always call both create mutations, use appropriate one
+  const createTodoLegacyMutation = useCreateTodo();
+  const createTodoOrgMutation = useCreateTodoInOrg(selectedOrgId);
+  const createNoteLegacyMutation = useCreateNote();
+  const createNoteOrgMutation = useCreateNoteInOrg(selectedOrgId);
+  
+  // Use appropriate create mutation based on selection
+  const createTodoMutation = selectedOrgId ? createTodoOrgMutation : createTodoLegacyMutation;
+  const createNoteMutation = selectedOrgId ? createNoteOrgMutation : createNoteLegacyMutation;
+  
+  // Always call both update/delete mutations, use appropriate one
+  const updateTodoLegacyMutation = useUpdateTodo();
+  const updateTodoOrgMutation = useUpdateTodoInOrg(selectedOrgId);
+  const deleteTodoLegacyMutation = useDeleteTodo();
+  const deleteTodoOrgMutation = useDeleteTodoInOrg(selectedOrgId);
+  
+  // Use appropriate mutations based on selection
+  const updateTodoMutation = selectedOrgId ? updateTodoOrgMutation : updateTodoLegacyMutation;
+  const deleteTodoMutation = selectedOrgId ? deleteTodoOrgMutation : deleteTodoLegacyMutation;
+    
   const updateNoteMutation = useUpdateNote();
   const deleteNoteMutation = useDeleteNote();
+
+  // Auto-select first organization if none selected AND user has organizations
+  if (!selectedOrgId && organizations && organizations.length > 0) {
+    setSelectedOrgId(organizations[0].id);
+  }
+  
+  // SECURITY: Clear selected org if user doesn't belong to it
+  if (selectedOrgId && organizations) {
+    const hasAccess = organizations.some(org => org.id === selectedOrgId);
+    if (!hasAccess) {
+      setSelectedOrgId(null);
+    }
+  }
+  
+  // SECURITY: Clear selected org if user has no organizations
+  if (selectedOrgId && organizations && organizations.length === 0) {
+    setSelectedOrgId(null);
+  }
+
+  // Reset selectedOrgId when user changes or organizations load
+  useEffect(() => {
+    if (organizations !== undefined) {
+      if (organizations.length === 0) {
+        setSelectedOrgId(null);
+      } else if (!selectedOrgId || !organizations.some(org => org.id === selectedOrgId)) {
+        // If no org selected or current selection is invalid, select first org
+        setSelectedOrgId(organizations[0]?.id || null);
+      }
+    }
+  }, [organizations, user?.id]); // Reset when organizations data or user changes
 
   const handleLogout = () => {
     logout();
@@ -74,6 +170,42 @@ export default function Dashboard() {
       const errorMessage = err.response?.data?.detail || 'Failed to invite user';
       alert(`Error: ${errorMessage}`);
       console.error('Invite error:', err.response?.data);
+    }
+  };
+
+  const handleDeleteOrganization = async () => {
+    if (!selectedOrgId) return;
+    
+    const orgName = currentOrg?.name || 'this organization';
+    if (!window.confirm(`Are you sure you want to delete ${orgName}? This action cannot be undone and will delete all associated todos and notes.`)) {
+      return;
+    }
+
+    try {
+      await deleteOrgMutation.mutateAsync();
+      setSelectedOrgId(null); // Clear selection after deletion
+      alert('Organization deleted successfully');
+    } catch (err) {
+      const errorMessage = err.response?.data?.detail || 'Failed to delete organization';
+      alert(`Error: ${errorMessage}`);
+      console.error('Delete organization error:', err.response?.data);
+    }
+  };
+
+  const handleRemoveMember = async (memberId, memberUsername) => {
+    if (!selectedOrgId) return;
+    
+    if (!window.confirm(`Are you sure you want to remove ${memberUsername} from the organization?`)) {
+      return;
+    }
+
+    try {
+      await removeMemberMutation.mutateAsync(memberId);
+      alert('Member removed successfully');
+    } catch (err) {
+      const errorMessage = err.response?.data?.detail || 'Failed to remove member';
+      alert(`Error: ${errorMessage}`);
+      console.error('Remove member error:', err.response?.data);
     }
   };
 
@@ -169,11 +301,61 @@ export default function Dashboard() {
           borderRadius: '8px',
           backgroundColor: '#f8f9fa'
         }}>
-          <h3>Quick Stats</h3>
-          <p><strong>Organization:</strong> {organization ? organization.name : 'None'}</p>
-          <p><strong>Total Todos:</strong> {todos ? todos.length : 0}</p>
-          <p><strong>Completed Todos:</strong> {todos ? todos.filter(t => t.completed).length : 0}</p>
-          <p><strong>Total Notes:</strong> {notes ? notes.length : 0}</p>
+          <h3>Organizations</h3>
+          {orgsLoading ? (
+            <p>Loading organizations...</p>
+          ) : organizations && organizations.length > 0 ? (
+            <div>
+              <p><strong>Total Organizations:</strong> {organizations.length}</p>
+              <div style={{ marginTop: '10px' }}>
+                {organizations.map(org => (
+                  <div key={org.id} style={{ 
+                    marginBottom: '8px', 
+                    padding: '8px', 
+                    backgroundColor: org.id === selectedOrgId ? '#e7f3ff' : '#fff',
+                    border: '1px solid #ddd',
+                    borderRadius: '4px'
+                  }}>
+                    <strong>{org.name}</strong>
+                    <br />
+                    <small>Role: {org.user_role || 'Member'}</small>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <p>No organizations</p>
+          )}
+        </div>
+        
+        <div style={{ 
+          padding: '1.5rem', 
+          border: '1px solid #ddd', 
+          borderRadius: '8px',
+          backgroundColor: '#f8f9fa'
+        }}>
+          <h3>Current View Stats</h3>
+          {userBelongsToSelectedOrg ? (
+            <>
+              <p><strong>Viewing:</strong> {currentOrg ? currentOrg.name : 'Loading...'}</p>
+              <p><strong>Todos in this org:</strong> {todos ? todos.length : 0}</p>
+              <p><strong>Completed Todos:</strong> {todos ? todos.filter(t => t.completed).length : 0}</p>
+              <p><strong>Notes in this org:</strong> {notes ? notes.length : 0}</p>
+            </>
+          ) : organizations && organizations.length > 0 ? (
+            <>
+              <p><strong>Viewing:</strong> {organization ? `${organization.name} (first org)` : 'Loading...'}</p>
+              <p><strong>Total Todos:</strong> {todos ? todos.length : 0}</p>
+              <p><strong>Completed Todos:</strong> {todos ? todos.filter(t => t.completed).length : 0}</p>
+              <p><strong>Total Notes:</strong> {notes ? notes.length : 0}</p>
+            </>
+          ) : (
+            <>
+              <p><strong>Status:</strong> No organizations</p>
+              <p><strong>Todos:</strong> 0 (Join an organization to access todos)</p>
+              <p><strong>Notes:</strong> 0 (Join an organization to access notes)</p>
+            </>
+          )}
         </div>
       </div>
     </div>
@@ -183,7 +365,7 @@ export default function Dashboard() {
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
         <h2>Todos</h2>
-        {organization && (
+        {(userBelongsToSelectedOrg || (!selectedOrgId && organizations && organizations.length > 0)) && (
           <button 
             onClick={() => setShowCreateTodo(true)}
             style={{
@@ -200,7 +382,7 @@ export default function Dashboard() {
         )}
       </div>
 
-      {!organization ? (
+      {!organizations || organizations.length === 0 ? (
         <p>You need to be part of an organization to manage todos.</p>
       ) : (
         <>
@@ -310,7 +492,7 @@ export default function Dashboard() {
                       >
                         {todo.completed ? 'Undo' : 'Complete'}
                       </button>
-                      {user.role === 'ADMIN' && (
+                      {(selectedOrgId ? organizations?.find(org => org.id === selectedOrgId)?.user_role === 'ADMIN' : user.role === 'ADMIN') && (
                         <button
                           onClick={() => handleDeleteTodo(todo.id)}
                           style={{
@@ -340,72 +522,71 @@ export default function Dashboard() {
 
   const renderOrganization = () => (
     <div>
-      <h2>Organization</h2>
-      {orgLoading ? (
-        <p>Loading organization...</p>
-      ) : orgError ? (
-        <div>
-          <p>You're not part of any organization yet.</p>
-          {!showCreateOrg ? (
-            <button 
-              onClick={() => setShowCreateOrg(true)}
-              style={{
-                padding: '0.5rem 1rem',
-                backgroundColor: '#28a745',
-                color: 'white',
-                border: 'none',
-                borderRadius: '4px',
-                cursor: 'pointer'
-              }}
-            >
-              Create Organization
-            </button>
-          ) : (
-            <form onSubmit={handleCreateOrg} style={{ 
-              marginTop: '1rem',
-              padding: '1rem',
-              border: '1px solid #ddd',
-              borderRadius: '4px',
-              backgroundColor: '#f8f9fa'
-            }}>
-              <h4>Create New Organization</h4>
-              <input
-                type="text"
-                placeholder="Organization Name"
-                value={orgName}
-                onChange={(e) => setOrgName(e.target.value)}
-                required
-                style={{ padding: '0.5rem', marginRight: '0.5rem', width: '200px' }}
-              />
-              <button type="submit" style={{
-                padding: '0.5rem 1rem',
-                backgroundColor: '#28a745',
-                color: 'white',
-                border: 'none',
-                borderRadius: '4px',
-                cursor: 'pointer',
-                marginRight: '0.5rem'
-              }}>
-                Create
-              </button>
-              <button 
-                type="button" 
-                onClick={() => setShowCreateOrg(false)}
-                style={{
-                  padding: '0.5rem 1rem',
-                  backgroundColor: '#6c757d',
-                  color: 'white',
-                  border: 'none',
-                  borderRadius: '4px',
-                  cursor: 'pointer'
-                }}
-              >
-                Cancel
-              </button>
-            </form>
-          )}
-        </div>
+      <h2>Organization Management</h2>
+      
+      {/* Create Organization Section */}
+      {!showCreateOrg ? (
+        <button 
+          onClick={() => setShowCreateOrg(true)}
+          style={{
+            padding: '0.5rem 1rem',
+            backgroundColor: '#28a745',
+            color: 'white',
+            border: 'none',
+            borderRadius: '4px',
+            cursor: 'pointer',
+            marginBottom: '2rem'
+          }}
+        >
+          Create New Organization
+        </button>
       ) : (
+        <form onSubmit={handleCreateOrg} style={{ 
+          marginBottom: '2rem',
+          padding: '1rem',
+          border: '1px solid #ddd',
+          borderRadius: '4px',
+          backgroundColor: '#f8f9fa'
+        }}>
+          <h4>Create New Organization</h4>
+          <input
+            type="text"
+            placeholder="Organization Name"
+            value={orgName}
+            onChange={(e) => setOrgName(e.target.value)}
+            required
+            style={{ padding: '0.5rem', marginRight: '0.5rem', width: '200px' }}
+          />
+          <button type="submit" style={{
+            padding: '0.5rem 1rem',
+            backgroundColor: '#28a745',
+            color: 'white',
+            border: 'none',
+            borderRadius: '4px',
+            cursor: 'pointer',
+            marginRight: '0.5rem'
+          }}>
+            Create
+          </button>
+          <button 
+            type="button" 
+            onClick={() => setShowCreateOrg(false)}
+            style={{
+              padding: '0.5rem 1rem',
+              backgroundColor: '#6c757d',
+              color: 'white',
+              border: 'none',
+              borderRadius: '4px',
+              cursor: 'pointer'
+            }}
+          >
+            Cancel
+          </button>
+        </form>
+      )}
+
+      {/* Selected Organization Details */}
+      {selectedOrgId && currentOrg ? (
         <div>
           <div style={{ 
             padding: '1rem', 
@@ -414,16 +595,38 @@ export default function Dashboard() {
             backgroundColor: '#f8f9fa',
             marginBottom: '2rem'
           }}>
-            <h3>{organization.name}</h3>
-            <p><strong>Created:</strong> {new Date(organization.created_at).toLocaleDateString()}</p>
-            <p><strong>Total Members:</strong> {organization.members?.length || 0}</p>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div>
+                <h3>{currentOrg.name}</h3>
+                <p><strong>Created:</strong> {new Date(currentOrg.created_at).toLocaleDateString()}</p>
+                <p><strong>Your Role:</strong> {
+                  organizations?.find(org => org.id === selectedOrgId)?.user_role || 'Member'
+                }</p>
+              </div>
+              {organizations?.find(org => org.id === selectedOrgId)?.user_role === 'ADMIN' && (
+                <button 
+                  onClick={handleDeleteOrganization}
+                  style={{
+                    padding: '0.5rem 1rem',
+                    backgroundColor: '#dc3545',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '4px',
+                    cursor: 'pointer',
+                    fontSize: '0.9rem'
+                  }}
+                >
+                  Delete Organization
+                </button>
+              )}
+            </div>
           </div>
           
           {/* Members List */}
           <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
               <h4>Members</h4>
-              {user.role === 'ADMIN' && (
+              {organizations?.find(org => org.id === selectedOrgId)?.user_role === 'ADMIN' && (
                 <button 
                   onClick={() => setShowInviteUser(true)}
                   style={{
@@ -440,129 +643,142 @@ export default function Dashboard() {
               )}
             </div>
 
-            {organization.members?.map(member => (
-              <div key={member.id} style={{ 
-                padding: '0.75rem', 
-                border: '1px solid #ddd', 
-                borderRadius: '4px',
-                marginBottom: '0.5rem',
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center'
-              }}>
-                <div>
-                  <strong>{member.username}</strong> 
-                  <span style={{ 
-                    marginLeft: '0.5rem',
-                    padding: '0.2rem 0.5rem',
-                    backgroundColor: member.role === 'ADMIN' ? '#dc3545' : '#007bff',
-                    color: 'white',
-                    borderRadius: '12px',
-                    fontSize: '0.8rem'
-                  }}>
-                    {member.role}
-                  </span>
-                  {member.email && <div style={{ fontSize: '0.9rem', color: '#6c757d' }}>{member.email}</div>}
+            {orgMembers ? (
+              orgMembers.map(member => (
+                <div key={member.id} style={{ 
+                  padding: '0.75rem', 
+                  border: '1px solid #ddd', 
+                  borderRadius: '4px',
+                  marginBottom: '0.5rem',
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center'
+                }}>
+                  <div>
+                    <strong>{member.username}</strong> ({member.email})
+                    <br />
+                    <small>Role: {member.role}</small>
+                  </div>
+                  {organizations?.find(org => org.id === selectedOrgId)?.user_role === 'ADMIN' && member.id !== user.id && (
+                    <button
+                      onClick={() => handleRemoveMember(member.id, member.username)}
+                      style={{
+                        padding: '0.25rem 0.5rem',
+                        backgroundColor: '#dc3545',
+                        color: 'white',
+                        border: 'none',
+                        borderRadius: '4px',
+                        cursor: 'pointer',
+                        fontSize: '0.8rem'
+                      }}
+                    >
+                      Remove
+                    </button>
+                  )}
                 </div>
-                <div style={{ fontSize: '0.8rem', color: '#6c757d' }}>
-                  Joined: {new Date(member.created_at).toLocaleDateString()}
-                </div>
-              </div>
-            ))}
-
-            {showInviteUser && user.role === 'ADMIN' && (
-              <form onSubmit={handleInviteUser} style={{ 
-                border: '1px solid #ddd', 
-                padding: '1rem', 
-                borderRadius: '4px',
-                backgroundColor: '#f8f9fa',
-                marginTop: '1rem'
-              }}>
-                <h5>Invite New User</h5>
-                <p style={{ fontSize: '0.9rem', color: '#6c757d', marginBottom: '1rem' }}>
-                  This will create a new user account and add them to your organization with a temporary password.
-                </p>
-                <div style={{ marginBottom: '0.5rem' }}>
-                  <label style={{ display: 'block', marginBottom: '0.25rem', fontWeight: 'bold' }}>
-                    Email Address *
-                  </label>
-                  <input
-                    type="email"
-                    placeholder="user@example.com"
-                    value={inviteEmail}
-                    onChange={(e) => setInviteEmail(e.target.value)}
-                    required
-                    style={{ width: '100%', padding: '0.5rem' }}
-                  />
-                </div>
-                <div style={{ marginBottom: '0.5rem' }}>
-                  <label style={{ display: 'block', marginBottom: '0.25rem', fontWeight: 'bold' }}>
-                    Username *
-                  </label>
-                  <input
-                    type="text"
-                    placeholder="username (3-50 characters)"
-                    value={inviteUsername}
-                    onChange={(e) => setInviteUsername(e.target.value)}
-                    required
-                    minLength={3}
-                    maxLength={50}
-                    style={{ width: '100%', padding: '0.5rem' }}
-                  />
-                </div>
-                <div style={{ marginBottom: '1rem' }}>
-                  <label style={{ display: 'block', marginBottom: '0.25rem', fontWeight: 'bold' }}>
-                    Role
-                  </label>
-                  <select
-                    value={inviteRole}
-                    onChange={(e) => setInviteRole(e.target.value)}
-                    style={{ width: '100%', padding: '0.5rem' }}
-                  >
-                    <option value="MEMBER">Member - Can view and manage todos/notes</option>
-                    <option value="ADMIN">Admin - Full organization management</option>
-                  </select>
-                </div>
-                <div style={{ display: 'flex', gap: '0.5rem' }}>
-                  <button 
-                    type="submit" 
-                    disabled={inviteUserMutation.isPending}
-                    style={{
-                      padding: '0.5rem 1rem',
-                      backgroundColor: '#007bff',
-                      color: 'white',
-                      border: 'none',
-                      borderRadius: '4px',
-                      cursor: 'pointer',
-                      flex: 1
-                    }}
-                  >
-                    {inviteUserMutation.isPending ? 'Inviting...' : 'Send Invite'}
-                  </button>
-                  <button 
-                    type="button" 
-                    onClick={() => {
-                      setShowInviteUser(false);
-                      setInviteEmail('');
-                      setInviteUsername('');
-                      setInviteRole('MEMBER');
-                    }}
-                    style={{
-                      padding: '0.5rem 1rem',
-                      backgroundColor: '#6c757d',
-                      color: 'white',
-                      border: 'none',
-                      borderRadius: '4px',
-                      cursor: 'pointer'
-                    }}
-                  >
-                    Cancel
-                  </button>
-                </div>
-              </form>
+              ))
+            ) : (
+              <p>Loading members...</p>
             )}
           </div>
         </div>
+      ) : selectedOrgId ? (
+        <p>Loading organization details...</p>
+      ) : (
+        <p>Please select an organization to manage.</p>
+      )}
+
+      {/* Invite User Form */}
+      {showInviteUser && organizations?.find(org => org.id === selectedOrgId)?.user_role === 'ADMIN' && selectedOrgId && (
+        <form onSubmit={handleInviteUser} style={{ 
+          border: '1px solid #ddd', 
+          padding: '1rem', 
+          borderRadius: '4px',
+          backgroundColor: '#f8f9fa',
+          marginTop: '1rem'
+        }}>
+          <h5>Invite New User</h5>
+          <p style={{ fontSize: '0.9rem', color: '#6c757d', marginBottom: '1rem' }}>
+            This will create a new user account and add them to your organization with a temporary password.
+          </p>
+          <div style={{ marginBottom: '0.5rem' }}>
+            <label style={{ display: 'block', marginBottom: '0.25rem', fontWeight: 'bold' }}>
+              Email Address *
+            </label>
+            <input
+              type="email"
+              placeholder="user@example.com"
+              value={inviteEmail}
+              onChange={(e) => setInviteEmail(e.target.value)}
+              required
+              style={{ width: '100%', padding: '0.5rem' }}
+            />
+          </div>
+          <div style={{ marginBottom: '0.5rem' }}>
+            <label style={{ display: 'block', marginBottom: '0.25rem', fontWeight: 'bold' }}>
+              Username *
+            </label>
+            <input
+              type="text"
+              placeholder="username (3-50 characters)"
+              value={inviteUsername}
+              onChange={(e) => setInviteUsername(e.target.value)}
+              required
+              minLength={3}
+              maxLength={50}
+              style={{ width: '100%', padding: '0.5rem' }}
+            />
+          </div>
+          <div style={{ marginBottom: '1rem' }}>
+            <label style={{ display: 'block', marginBottom: '0.25rem', fontWeight: 'bold' }}>
+              Role
+            </label>
+            <select
+              value={inviteRole}
+              onChange={(e) => setInviteRole(e.target.value)}
+              style={{ width: '100%', padding: '0.5rem' }}
+            >
+              <option value="MEMBER">Member - Can view and manage todos/notes</option>
+              <option value="ADMIN">Admin - Full organization management</option>
+            </select>
+          </div>
+          <div style={{ display: 'flex', gap: '0.5rem' }}>
+            <button 
+              type="submit" 
+              disabled={inviteUserMutation.isPending}
+              style={{
+                padding: '0.5rem 1rem',
+                backgroundColor: '#007bff',
+                color: 'white',
+                border: 'none',
+                borderRadius: '4px',
+                cursor: 'pointer',
+                flex: 1
+              }}
+            >
+              {inviteUserMutation.isPending ? 'Inviting...' : 'Send Invite'}
+            </button>
+            <button 
+              type="button" 
+              onClick={() => {
+                setShowInviteUser(false);
+                setInviteEmail('');
+                setInviteUsername('');
+                setInviteRole('MEMBER');
+              }}
+              style={{
+                padding: '0.5rem 1rem',
+                backgroundColor: '#6c757d',
+                color: 'white',
+                border: 'none',
+                borderRadius: '4px',
+                cursor: 'pointer'
+              }}
+            >
+              Cancel
+            </button>
+          </div>
+        </form>
       )}
     </div>
   );
@@ -571,7 +787,7 @@ export default function Dashboard() {
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
         <h2>Notes</h2>
-        {organization && (
+        {(userBelongsToSelectedOrg || (!selectedOrgId && organizations && organizations.length > 0)) && (
           <button 
             onClick={() => setShowCreateNote(true)}
             style={{
@@ -588,7 +804,7 @@ export default function Dashboard() {
         )}
       </div>
 
-      {!organization ? (
+      {!organizations || organizations.length === 0 ? (
         <p>You need to be part of an organization to manage notes.</p>
       ) : (
         <>
@@ -662,7 +878,7 @@ export default function Dashboard() {
                 }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.5rem' }}>
                     <h4 style={{ margin: '0', flex: 1 }}>{note.title}</h4>
-                    {user.role === 'ADMIN' && (
+                    {(selectedOrgId ? organizations?.find(org => org.id === selectedOrgId)?.user_role === 'ADMIN' : user.role === 'ADMIN') && (
                       <button
                         onClick={() => handleDeleteNote(note.id)}
                         style={{
@@ -748,6 +964,14 @@ export default function Dashboard() {
       </header>
       
       <Navigation activeTab={activeTab} onTabChange={setActiveTab} />
+      
+      {/* Organization Selector - only show if user has organizations */}
+      {organizations && organizations.length > 0 && (
+        <OrganizationSelector 
+          selectedOrgId={selectedOrgId}
+          onOrganizationChange={setSelectedOrgId}
+        />
+      )}
       
       {renderContent()}
     </div>

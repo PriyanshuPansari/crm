@@ -1,6 +1,7 @@
 import pytest
 import uuid
-from app.models.user import User, Role
+from app.models.user import User
+from app.models.user_organization import UserOrganization, UserOrganizationRole
 from app.models.organization import Organization
 from app.core.security import hash_password
 from tests.conftest import get_auth_headers
@@ -36,10 +37,13 @@ def org_a_admin(db_session, org_a):
         email=email,
         hashed_password=hash_password("password"),
         role=Role.ADMIN,
-        organization_id=org_a.id,
         is_active=True
     )
     db_session.add(user)
+    db_session.flush()
+    
+    # Add user to organization using many-to-many relationship
+    org_a.users.append(user)
     db_session.commit()
     db_session.refresh(user)
     return user
@@ -55,10 +59,13 @@ def org_b_member(db_session, org_b):
         email=email,
         hashed_password=hash_password("password"),
         role=Role.MEMBER,
-        organization_id=org_b.id,
         is_active=True
     )
     db_session.add(user)
+    db_session.flush()
+    
+    # Add user to organization using many-to-many relationship
+    org_b.users.append(user)
     db_session.commit()
     db_session.refresh(user)
     return user
@@ -213,6 +220,9 @@ def test_list_endpoints_respect_org_boundaries(client, org_a_admin, org_b_member
 
 def test_cross_org_admin_cannot_delete_other_org_resources(client, org_a_admin, org_b_member, db_session):
     """Test that even admins cannot delete resources from other organizations"""
+    # Get organization B
+    org_b = org_b_member.organizations[0]
+    
     # Create an admin in organization B
     orgb_admin_username = f"orgb_admin_{uuid.uuid4().hex[:8]}"
     orgb_admin_email = f"orgb_admin_{uuid.uuid4().hex[:8]}@example.com"
@@ -221,10 +231,13 @@ def test_cross_org_admin_cannot_delete_other_org_resources(client, org_a_admin, 
         email=orgb_admin_email,
         hashed_password=hash_password("password"),
         role=Role.ADMIN,
-        organization_id=org_b_member.organization_id,
         is_active=True
     )
     db_session.add(orgb_admin)
+    db_session.flush()
+    
+    # Add admin to organization B
+    org_b.users.append(orgb_admin)
     db_session.commit()
     db_session.refresh(orgb_admin)
 

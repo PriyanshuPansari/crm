@@ -1,6 +1,7 @@
 import pytest
 import uuid
-from app.models.user import User, Role
+from app.models.user import User
+from app.models.user_organization import UserOrganization, UserOrganizationRole
 from app.models.organization import Organization
 from app.core.security import hash_password
 from tests.conftest import get_auth_headers
@@ -27,10 +28,13 @@ def todo_admin_user(db_session, test_todo_organization):
         email=unique_email,
         hashed_password=hash_password("admin_password"),
         role=Role.ADMIN,
-        organization_id=test_todo_organization.id,
         is_active=True
     )
     db_session.add(user)
+    db_session.flush()
+    
+    # Add user to organization using many-to-many relationship
+    test_todo_organization.users.append(user)
     db_session.commit()
     db_session.refresh(user)
     return user
@@ -46,10 +50,13 @@ def todo_member_user(db_session, test_todo_organization):
         email=unique_email,
         hashed_password=hash_password("member_password"),
         role=Role.MEMBER,
-        organization_id=test_todo_organization.id,
         is_active=True
     )
     db_session.add(user)
+    db_session.flush()
+    
+    # Add user to organization using many-to-many relationship
+    test_todo_organization.users.append(user)
     db_session.commit()
     db_session.refresh(user)
     return user
@@ -143,10 +150,13 @@ def test_users_can_only_see_todos_from_their_organization(client, todo_member_us
         email=other_email,
         hashed_password=hash_password("other_password"),
         role=Role.MEMBER,
-        organization_id=other_org.id,
         is_active=True
     )
     db_session.add(other_user)
+    db_session.flush()
+    
+    # Add user to the other organization
+    other_org.users.append(other_user)
     db_session.commit()
     db_session.refresh(other_user)
 

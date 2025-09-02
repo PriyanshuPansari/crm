@@ -1,6 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
-from sqlalchemy.exc import IntegrityError
 from typing import List
 from uuid import UUID
 
@@ -33,16 +32,7 @@ def create_organization(
     try:
         org = crud_organization.create_organization(db, org_in, current_user.id)
         return org
-    except IntegrityError as e:
-        db.rollback()
-        if "organizations_name_key" in str(e):
-            raise HTTPException(
-                status_code=400, 
-                detail=f"Organization name '{org_in.name}' already exists. Please choose a different name."
-            )
-        raise HTTPException(status_code=400, detail="Database constraint violation")
     except Exception as e:
-        db.rollback()
         raise HTTPException(status_code=400, detail=str(e))
 
 

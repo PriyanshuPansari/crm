@@ -2,7 +2,7 @@ from pydantic import BaseModel, EmailStr, Field
 from uuid import UUID
 from datetime import datetime
 from typing import Optional, List
-from app.models.user import Role
+from app.models.user_organization import UserOrganizationRole
 
 
 class OrganizationBase(BaseModel):
@@ -27,7 +27,7 @@ class OrganizationOut(OrganizationBase):
 
 class UserInvite(BaseModel):
     email: EmailStr
-    role: Role = Role.MEMBER
+    role: UserOrganizationRole = UserOrganizationRole.MEMBER
     username: str = Field(..., min_length=3, max_length=50)
 
 
@@ -39,14 +39,14 @@ class UserInviteResponse(BaseModel):
 
 
 class UserRoleUpdate(BaseModel):
-    role: Role
+    role: UserOrganizationRole
 
 
 class OrganizationMemberOut(BaseModel):
     id: UUID
     username: str
     email: str
-    role: Role
+    role: UserOrganizationRole
     is_active: bool
     created_at: datetime
 
@@ -56,3 +56,4 @@ class OrganizationMemberOut(BaseModel):
 
 class OrganizationWithMembers(OrganizationOut):
     members: List[OrganizationMemberOut] = []
+    user_role: Optional[UserOrganizationRole] = None  # User's role in this organization

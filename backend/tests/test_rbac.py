@@ -1,6 +1,7 @@
 import pytest
 import uuid
-from app.models.user import User, Role
+from app.models.user import User
+from app.models.user_organization import UserOrganization, UserOrganizationRole
 from app.models.organization import Organization
 from app.core.security import hash_password
 from tests.conftest import get_auth_headers
@@ -26,11 +27,18 @@ def admin_user(db_session, test_organization):
         username=unique_username,
         email=unique_email,
         hashed_password=hash_password("admin_password"),
-        role=Role.ADMIN,
-        organization_id=test_organization.id,
         is_active=True
     )
     db_session.add(user)
+    db_session.flush()
+    
+    # Add user to organization with admin role
+    user_org = UserOrganization(
+        user_id=user.id,
+        organization_id=test_organization.id,
+        role=UserOrganizationRole.ADMIN
+    )
+    db_session.add(user_org)
     db_session.commit()
     db_session.refresh(user)
     return user
@@ -45,11 +53,18 @@ def member_user(db_session, test_organization):
         username=unique_username,
         email=unique_email,
         hashed_password=hash_password("member_password"),
-        role=Role.MEMBER,
-        organization_id=test_organization.id,
         is_active=True
     )
     db_session.add(user)
+    db_session.flush()
+    
+    # Add user to organization with member role
+    user_org = UserOrganization(
+        user_id=user.id,
+        organization_id=test_organization.id,
+        role=UserOrganizationRole.MEMBER
+    )
+    db_session.add(user_org)
     db_session.commit()
     db_session.refresh(user)
     return user
@@ -138,10 +153,13 @@ def test_users_can_only_see_notes_from_their_organization(client, admin_user, me
         email=other_email,
         hashed_password=hash_password("other_password"),
         role=Role.MEMBER,
-        organization_id=other_org.id,
         is_active=True
     )
     db_session.add(other_user)
+    db_session.flush()
+    
+    # Add user to the other organization
+    other_org.users.append(other_user)
     db_session.commit()
     db_session.refresh(other_user)
 

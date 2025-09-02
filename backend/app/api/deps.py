@@ -2,10 +2,12 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
 from jose import JWTError
+from uuid import UUID
 
 from app.db.session import SessionLocal
 from app.core.security import decode_access_token
 from app.models.user import User
+from app.models.organization import Organization
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
 
@@ -42,6 +44,62 @@ get_current_active_user = require_active_user
 
 
 def require_admin(current_user: User = Depends(require_active_user)) -> User:
-    if current_user.role != "ADMIN":
+    # This dependency is now deprecated for organization-specific operations
+    # Use require_organization_admin instead for organization-specific admin checks
+    # Keep this for backward compatibility with non-organization endpoints
+    from app.models.user_organization import UserOrganization, UserOrganizationRole
+    
+    # Check if user is admin in any organization
+    admin_in_any_org = any(
+        uo.role == UserOrganizationRole.ADMIN 
+        for uo in current_user.user_organizations
+    )
+    
+    if not admin_in_any_org:
         raise HTTPException(status_code=403, detail="Admin privileges required")
     return current_user
+
+
+def require_organization_member(org_id: UUID):
+    """Dependency factory to check if user is a member of a specific organization"""
+    def _require_organization_member(
+        current_user: User = Depends(require_active_user),
+        db: Session = Depends(get_db)
+    ) -> User:
+        from app.models.user_organization import UserOrganization
+        
+        # Check if user is a member of the organization
+        user_org = db.query(UserOrganization).filter(
+            UserOrganization.user_id == current_user.id,
+            UserOrganization.organization_id == org_id
+        ).first()
+        
+        if not user_org:
+            raise HTTPException(status_code=403, detail="Not a member of this organization")
+        
+        return current_user
+    return _require_organization_member
+
+
+def require_organization_admin(org_id: UUID):
+    """Dependency factory to check if user is an admin of a specific organization"""
+    def _require_organization_admin(
+        current_user: User = Depends(require_active_user),
+        db: Session = Depends(get_db)
+    ) -> User:
+        from app.models.user_organization import UserOrganization, UserOrganizationRole
+        
+        # Check if user is an admin of the organization
+        user_org = db.query(UserOrganization).filter(
+            UserOrganization.user_id == current_user.id,
+            UserOrganization.organization_id == org_id
+        ).first()
+        
+        if not user_org:
+            raise HTTPException(status_code=403, detail="Not a member of this organization")
+            
+        if user_org.role != UserOrganizationRole.ADMIN:
+            raise HTTPException(status_code=403, detail="Admin privileges required for this organization")
+        
+        return current_user
+    return _require_organization_admin
